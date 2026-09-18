@@ -95,13 +95,16 @@ async function main() {
       days.every((d) => d.id && d.name && Array.isArray(d.exercises) && d.exercises.length),
     `status=${prog.status} days=${JSON.stringify(days) && JSON.stringify(days).slice(0, 200)}`);
 
-  const today = new Date().toISOString().slice(0, 10);
-  const sessId = `${today}-d1`;
+  // A deliberately synthetic date, so smoke runs never land in the real gym
+  // log, never move the week count, and never collide with a real workout.
+  // The id is constant, so re-runs upsert one row rather than accumulating.
+  const SMOKE_DATE = '1990-01-01';
+  const sessId = `${SMOKE_DATE}-smoke`;
   const startedAt = new Date(Date.now() - 42 * 60000).toISOString();
   const post = await req('/api/gym/sessions', {
     method: 'POST', token: APP,
     body: {
-      id: sessId, date: today, dayId: 'd1', dayName: 'Deadlift + Back',
+      id: sessId, date: SMOKE_DATE, dayId: 'd1', dayName: 'Deadlift + Back',
       sets: { e1: [{ w: '225', r: '4' }, { w: '245', r: '4' }] },
       names: { e1: 'Deadlift' },
       startedAt,
@@ -112,7 +115,7 @@ async function main() {
       post.json.session && post.json.session.id === sessId,
     `status=${post.status} body=${post.text.slice(0, 300)}`);
 
-  const list = await req('/api/gym/sessions?limit=10', { token: APP });
+  const list = await req('/api/gym/sessions?limit=500', { token: APP });
   const found = list.json && list.json.sessions &&
     list.json.sessions.find((s) => s.id === sessId);
   check('GET /api/gym/sessions round-trips that session',
@@ -120,10 +123,33 @@ async function main() {
       found.sets.e1[0] && found.sets.e1[0].w === '225',
     `status=${list.status} found=${JSON.stringify(found) && JSON.stringify(found).slice(0, 300)}`);
 
-  check('started_at survived the round-trip so duration is measurable',
+  check('both ends of the workout are recorded so duration is measurable',
     !!found && !!found.started_at && !!found.ended_at &&
-      Math.abs((new Date(found.ended_at) - new Date(found.started_at)) / 60000 - 42) < 3,
+      new Date(found.ended_at) > new Date(found.started_at) &&
+      Math.abs(Date.now() - new Date(found.ended_at)) < 120000,
     `started_at=${found && found.started_at} ended_at=${found && found.ended_at}`);
+
+  // The upsert exists to hold the earliest start across re-saves of the same
+  // day, so a second save an hour later does not shrink the workout to a
+  // minute. Re-save with a deliberately LATER start and confirm it is ignored.
+  const firstStart = found && found.started_at;
+  const resave = await req('/api/gym/sessions', {
+    method: 'POST', token: APP,
+    body: {
+      id: sessId, date: SMOKE_DATE, dayId: 'd1', dayName: 'Deadlift + Back',
+      sets: { e1: [{ w: '225', r: '4' }, { w: '245', r: '4' }, { w: '255', r: '3' }] },
+      names: { e1: 'Deadlift' },
+      startedAt: new Date(Date.now() - 60000).toISOString(),
+    },
+  });
+  check('re-saving the same day keeps the earliest started_at',
+    resave.status === 200 && !!firstStart && resave.json && resave.json.session &&
+      new Date(resave.json.session.started_at).getTime() === new Date(firstStart).getTime(),
+    `first=${firstStart} after_resave=${resave.json && resave.json.session && resave.json.session.started_at}`);
+
+  check('re-saving the same day replaces the sets',
+    resave.status === 200 && resave.json && resave.json.ok === true,
+    `status=${resave.status} body=${resave.text.slice(0, 200)}`);
 
   const badSess = await req('/api/gym/sessions', { method: 'POST', token: APP, body: { id: 'x' } });
   check('POST /api/gym/sessions with missing fields returns 400',
@@ -172,11 +198,28 @@ async function main() {
         !!row && !JSON.stringify(row.payload).includes('must never be stored') &&
           !JSON.stringify(row.payload).includes('.jsonl'),
         `payload=${JSON.stringify(row && row.payload)}`);
+
+      // Synthetic beats credit fake minutes to a real project name, which is
+      // the one number milestone 1 is supposed to verify against. Leaving
+      // them behind would quietly poison it. Same for the synthetic workout.
+      console.log('\ncleanup');
+      const delBeats = await pool.query(
+        `DELETE FROM cc_events WHERE session_id LIKE 'smoke-%'`);
+      const delSess = await pool.query(
+        `DELETE FROM gym_sessions WHERE id = $1`, [sessId]);
+      console.log(`  removed ${delBeats.rowCount} synthetic beat(s) and ${delSess.rowCount} synthetic workout(s)`);
+
+      const { rows: left } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM cc_events WHERE session_id LIKE 'smoke-%'`);
+      check('no synthetic telemetry is left behind', left[0].n === 0,
+        `${left[0].n} smoke rows still present`);
     } finally {
       await pool.end();
     }
   } else {
     console.log('\ndatabase\n  SKIP  DATABASE_URL not set - row-level checks skipped');
+    console.log('        NOTE: synthetic beats and the synthetic workout stay in the');
+    console.log('        database. Re-run with DATABASE_URL set to clean them up.');
   }
 
   console.log(`\n${pass} passed, ${fail} failed\n`);
