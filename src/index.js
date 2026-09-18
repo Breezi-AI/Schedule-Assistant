@@ -27,9 +27,47 @@ app.use('/api/gym', gym);
 // The gym log UI.
 app.use(express.static(join(__dirname, 'public'), { extensions: ['html'] }));
 
+/**
+ * Last line of defence. Two jobs:
+ *
+ *  1. Answer. An async route that rejects reaches here via next(err), so the
+ *     request gets a response instead of hanging until the client gives up.
+ *  2. Keep /hooks quiet. A hook that receives an error is a hook that can
+ *     surface a failure in the middle of the user's work, so anything under
+ *     /hooks answers 200 regardless -- including a body express.json()
+ *     could not parse. Telemetry never breaks the user's turn.
+ */
+app.use((err, req, res, _next) => {
+  console.error(`[error] ${req.method} ${req.path}:`, err.message);
+  if (res.headersSent) return;
+  if (req.path.startsWith('/hooks') || req.baseUrl?.startsWith('/hooks')) {
+    return res.status(200).json({ ok: true, noted: false });
+  }
+  res.status(err.status && err.status < 500 ? err.status : 500)
+     .json({ error: err.status === 400 ? 'bad request' : 'server error' });
+});
+
 const port = process.env.PORT || 3000;
 
-migrate()
+/**
+ * Railway can start this container before Postgres is accepting connections.
+ * Retrying turns a first-boot race into a clean start rather than a red deploy.
+ */
+async function migrateWithRetry(attempts = 5) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      await migrate();
+      return;
+    } catch (err) {
+      if (i === attempts) throw err;
+      const wait = i * 2000;
+      console.warn(`migrate attempt ${i}/${attempts} failed (${err.message}); retrying in ${wait}ms`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+}
+
+migrateWithRetry()
   .then(() => {
     app.listen(port, () => console.log(`personal-ops listening on :${port}`));
   })

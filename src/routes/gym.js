@@ -41,11 +41,20 @@ export function requireToken(req, res, next) {
   next();
 }
 
+/**
+ * Express 4 does not catch a rejected promise from an async handler, and
+ * Node exits the process on an unhandled rejection. Without this, one
+ * transient database error in any gym route takes the whole service down --
+ * including /hooks/cc, which is supposed to be unkillable. Route errors
+ * through next() so the error handler answers and the process survives.
+ */
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 gym.use(requireToken);
 
 // --- program -----------------------------------------------------
 
-gym.get('/program', async (_req, res) => {
+gym.get('/program', wrap(async (_req, res) => {
   const { rows } = await q('SELECT days FROM gym_program WHERE id = 1');
   if (!rows.length) {
     await q('INSERT INTO gym_program (id, days) VALUES (1, $1) ON CONFLICT (id) DO NOTHING',
@@ -53,9 +62,9 @@ gym.get('/program', async (_req, res) => {
     return res.json({ days: DEFAULT_PROGRAM.days });
   }
   res.json({ days: rows[0].days });
-});
+}));
 
-gym.put('/program', async (req, res) => {
+gym.put('/program', wrap(async (req, res) => {
   const days = req.body?.days;
   if (!Array.isArray(days) || !days.length) {
     return res.status(400).json({ error: 'days must be a non-empty array' });
@@ -66,11 +75,11 @@ gym.put('/program', async (req, res) => {
     [JSON.stringify(days)]
   );
   res.json({ ok: true });
-});
+}));
 
 // --- sessions ----------------------------------------------------
 
-gym.get('/sessions', async (req, res) => {
+gym.get('/sessions', wrap(async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 120, 500);
   const { rows } = await q(
     `SELECT id, session_date, day_id, day_name, sets, names,
@@ -79,12 +88,15 @@ gym.get('/sessions', async (req, res) => {
     [limit]
   );
   res.json({ sessions: rows });
-});
+}));
 
-gym.post('/sessions', async (req, res) => {
-  const s = req.body || {};
+gym.post('/sessions', wrap(async (req, res) => {
+  const s = req.body && typeof req.body === 'object' ? req.body : {};
   if (!s.id || !s.date || !s.dayId) {
     return res.status(400).json({ error: 'id, date and dayId are required' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(s.date))) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
   }
   // Guard the client clock. A started_at in the future, or absurdly far in
   // the past, yields a nonsense duration -- fall back to now() instead.
@@ -112,11 +124,11 @@ gym.post('/sessions', async (req, res) => {
      startedAt ? startedAt.toISOString() : new Date().toISOString()]
   );
   res.json({ ok: true, session: rows[0] });
-});
+}));
 
 // --- this week, the only number that matters right now -----------
 
-gym.get('/week', async (_req, res) => {
+gym.get('/week', wrap(async (_req, res) => {
   const { rows } = await q(
     `SELECT COUNT(*)::int AS sessions,
             COALESCE(ROUND(AVG(
@@ -135,4 +147,4 @@ gym.get('/week', async (_req, res) => {
     gym: { ...rows[0], target: 3 },
     claude_code_minutes_by_project: byProject,
   });
-});
+}));

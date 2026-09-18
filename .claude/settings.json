@@ -8,7 +8,6 @@
             "url": "https://REPLACE-ME.up.railway.app/hooks/cc",
             "headers": { "Authorization": "Bearer $ASSISTANT_TOKEN" },
             "allowedEnvVars": ["ASSISTANT_TOKEN"],
-            "async": true,
             "timeout": 5
           }
         ]
