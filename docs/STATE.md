@@ -30,7 +30,7 @@ Everything below was run on 2026-09-17, most of it against the deployed URL.
   the Postgres 16 this file previously recorded.
 - The server boots and listens. Railway logs: `personal-ops listening on :8080`.
 
-**HTTP — 12 of 12 checks pass (`npm run smoke`)**
+**HTTP and database — 20 of 20 checks pass (`npm run smoke`)**
 
 - `GET /health` returns 200 `{ok:true}`. `ok:true` means `SELECT 1` reached
   Postgres, so this doubles as a database liveness check.
@@ -41,8 +41,23 @@ Everything below was run on 2026-09-17, most of it against the deployed URL.
 - `GET /api/gym/program` seeds the three-day split and returns it.
 - `POST /api/gym/sessions` then `GET /api/gym/sessions` round-trips, and
   `started_at`/`ended_at` survive, so duration is measurable.
+- Re-saving the same day keeps the earliest `started_at` and replaces the
+  sets, which is what stops an evening workout collapsing to a minute when
+  you hit save a second time.
 - `POST /api/gym/sessions` with missing fields returns 400.
 - `GET /api/gym/week` returns gym totals and active minutes by project.
+
+**Row level, read straight out of Postgres**
+
+- A `cc_events` row lands, with `project = 'breezi-dispatcher'` parsed from a
+  Windows `cwd`, and a `received_at` stamped by the server.
+- The Stop-shape fields (`permission_mode`, `effort`) are captured.
+- **Nothing from the transcript is stored.** `last_assistant_message` and
+  `transcript_path` are both absent from the stored `payload`. This is now
+  verified against stored data, not only against `shapeOf` in isolation.
+- The suite deletes its own synthetic beats and workout afterwards and
+  asserts none are left. `cc_events` and `gym_sessions` are both empty, so
+  the first real beat and first real workout will be unambiguous.
 
 **The two claims the hook collector exists to make**
 
@@ -70,15 +85,9 @@ transcript path.
   is what closes this.
 - **The gym page has not been opened on a phone and no real workout logged.**
   Every gym row so far is synthetic.
-- **No row of `cc_events` has been read back directly.** The `payload` column
-  has not been eyeballed, so "no transcript content is stored" rests on the
-  unit test of `shapeOf`, not on inspection of stored data. Reading a row needs
-  either a Railway SSH key or a TCP proxy on the Postgres service; neither
-  exists yet and both are persistent artifacts, so neither was created.
-- **`npm run dev` against a reachable database.** This machine has no local
-  Postgres and Railway's `DATABASE_URL` is an internal hostname, so the local
-  workflow in the README cannot be run as written. A TCP proxy on the Postgres
-  service is what would fix it.
+- **`npm run dev` has not actually been run**, though it now can be: a TCP
+  proxy on the Postgres service makes the database reachable from this
+  machine, and `.env` (gitignored) holds that URL and both tokens.
 - **The session-grouping SQL against real, accumulated, multi-beat data.** It
   has only ever seen single synthetic beats, where `active_minutes` is just
   `BEAT_FLOOR_MINUTES`. The gap/cap/floor arithmetic is still unproven on a
@@ -109,6 +118,27 @@ transcript path.
   Postgres binaries cannot start (`STATUS_DLL_NOT_FOUND`). A local Postgres
   needs an admin install. That is why Railway is doing double duty.
 - Railway provisions **Postgres 18**, not 16.
+- **The Postgres service now has a public TCP proxy**
+  (`nozomi.proxy.rlwy.net:18728`), added deliberately so rows can be read back
+  and so the README's local workflow is possible at all. It is the database
+  reachable from the internet, guarded only by Railway's generated password.
+  `railway tcp-proxy delete --service Postgres` closes it.
+- **A smoke suite that writes to the real log is a trap.** The first version
+  credited synthetic Claude Code minutes to `breezi-dispatcher` and wrote a
+  workout onto today's date — corrupting the very number milestone 1 exists to
+  verify. It now uses a synthetic date and cleans up after itself.
+
+## Known rough edges, deliberately not fixed in milestone 0
+
+- **Week boundaries are computed in the database's timezone, not yours.**
+  `GET /api/gym/week` uses `date_trunc('week', now())`, which Postgres
+  evaluates in the server session's timezone (UTC). `TZ=America/New_York` is
+  set on the app service, but that does not change Postgres. Late Sunday
+  evening Eastern is already Monday UTC, so a Sunday-night workout can land in
+  next week's count. The UI's own three-dot week counter uses the browser's
+  local Monday and will disagree with the API at that edge.
+- The gym page stores `APP_TOKEN` in `localStorage`. Anyone with the unlocked
+  phone has the log. That is the accepted trade for a page that opens instantly.
 
 ## Decisions worth not relitigating
 
