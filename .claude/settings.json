@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "http",
-            "url": "https://REPLACE-ME.up.railway.app/hooks/cc",
+            "url": "https://app-production-7e75.up.railway.app/hooks/cc",
             "headers": { "Authorization": "Bearer $ASSISTANT_TOKEN" },
             "allowedEnvVars": ["ASSISTANT_TOKEN"],
             "timeout": 5
