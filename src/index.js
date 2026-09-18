@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path';
 import { migrate, q } from './db/index.js';
 import { hooks } from './routes/hooks.js';
 import { gym } from './routes/gym.js';
+import { blocks } from './routes/blocks.js';
+import { startSchedule } from './schedule.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -23,6 +25,7 @@ app.get('/health', async (_req, res) => {
 
 app.use('/hooks', hooks);
 app.use('/api/gym', gym);
+app.use('/api/blocks', blocks);
 
 // The gym log UI.
 app.use(express.static(join(__dirname, 'public'), { extensions: ['html'] }));
@@ -70,6 +73,7 @@ async function migrateWithRetry(attempts = 5) {
 migrateWithRetry()
   .then(() => {
     app.listen(port, () => console.log(`personal-ops listening on :${port}`));
+    startSchedule();
   })
   .catch((err) => {
     console.error('migrate failed:', err);

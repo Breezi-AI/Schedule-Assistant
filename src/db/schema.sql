@@ -50,3 +50,36 @@ CREATE TABLE IF NOT EXISTS gym_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS gym_sessions_date_idx ON gym_sessions (session_date DESC);
+
+-- ---------------------------------------------------------------
+-- Commitments. Things the assistant has put on the calendar and
+-- intends to hold you to.
+--
+-- Named for what it becomes, not for what it holds today. Right now
+-- every row is kind = 'gym', but the shape is deliberately general --
+-- this is the table that later carries every kind of block, which is
+-- why `kind` exists from the start rather than being retrofitted.
+--
+-- `id` is deterministic: "<kind>-<local date>", e.g. "gym-2026-09-21".
+-- That is the whole idempotency mechanism. One commitment of a kind per
+-- local date is enforced by the primary key, so a second planner run
+-- cannot write a duplicate even if it races the first -- there is no
+-- check-then-insert window to lose.
+--
+-- planned_start / planned_end are absolute instants. The local wall
+-- clock they were derived from lives in the calendar event; storing an
+-- instant here means a DST change cannot retroactively move a block.
+-- ---------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS commitments (
+  id                TEXT PRIMARY KEY,
+  kind              TEXT NOT NULL DEFAULT 'gym',
+  day_id            TEXT,
+  planned_start     TIMESTAMPTZ NOT NULL,
+  planned_end       TIMESTAMPTZ NOT NULL,
+  calendar_event_id TEXT,
+  status            TEXT NOT NULL DEFAULT 'planned',
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS commitments_start_idx ON commitments (planned_start);
+CREATE INDEX IF NOT EXISTS commitments_kind_idx  ON commitments (kind, planned_start);
