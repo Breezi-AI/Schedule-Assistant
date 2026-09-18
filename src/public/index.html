@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121210">
+<title>Gym Log</title>
+<style>
+  :root{
+    --bg:#f6f5f2; --fg:#16150f; --muted:#6f6d63; --card:#ffffff;
+    --line:#e3e0d8; --accent:#b2411a; --good:#1f7a4d; --field:#f2f0ea;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#121210; --fg:#ececdf; --muted:#918f84; --card:#1c1c19;
+      --line:#2e2e29; --accent:#e0703f; --good:#4fbf8b; --field:#242420;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:16px; line-height:1.4; padding:0 0 96px; -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:640px;margin:0 auto;padding:0 14px}
+  header{padding:18px 0 6px}
+  h1{font-size:19px;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13px;margin-top:2px}
+  nav{display:flex;gap:6px;margin:14px 0 10px;overflow-x:auto;padding-bottom:2px}
+  nav button{
+    flex:0 0 auto;border:1px solid var(--line);background:var(--card);color:var(--fg);
+    padding:9px 13px;border-radius:999px;font-size:14px;font-weight:600;cursor:pointer;
+  }
+  nav button[aria-pressed="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+  .exhead{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .exname{font-weight:650;font-size:15px}
+  .target{color:var(--muted);font-size:12px;white-space:nowrap}
+  .last{font-size:12px;color:var(--muted);margin-top:3px}
+  .up{color:var(--good);font-weight:650}
+  .sets{display:flex;flex-direction:column;gap:6px;margin-top:9px}
+  .setrow{display:flex;align-items:center;gap:6px}
+  .setno{width:20px;color:var(--muted);font-size:12px;flex:0 0 auto}
+  input[type=text],input[type=number],input[type=password]{
+    background:var(--field);border:1px solid var(--line);color:var(--fg);
+    border-radius:8px;padding:9px 8px;font-size:15px;width:100%;min-width:0;font-family:inherit;
+  }
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  .unit{color:var(--muted);font-size:12px;flex:0 0 auto}
+  .btn{
+    border:1px solid var(--line);background:var(--card);color:var(--fg);
+    padding:10px 14px;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;
+  }
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.wide{width:100%}
+  .btn.small{padding:6px 10px;font-size:13px}
+  .savebar{
+    position:fixed;left:0;right:0;bottom:0;background:var(--bg);
+    border-top:1px solid var(--line);padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+  }
+  .savebar .inner{max-width:640px;margin:0 auto;display:flex;gap:8px;align-items:center}
+  .status{font-size:12px;color:var(--muted);min-height:16px;margin-top:6px;text-align:center}
+  .row{display:flex;gap:8px;align-items:center}
+  .editfields{display:flex;gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap}
+  .editfields input[type=text]{flex:1 1 140px}
+  .editfields input[type=number]{width:62px;flex:0 0 auto}
+  .hist{font-size:14px}
+  .hist .d{font-weight:650;margin-bottom:2px}
+  .muted{color:var(--muted);font-size:13px}
+  .spacer{height:8px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+  td{padding:3px 0;vertical-align:top}
+  td.k{color:var(--muted);padding-right:10px;white-space:nowrap}
+  .week{display:flex;gap:6px;align-items:center;margin-top:6px}
+  .dot{width:11px;height:11px;border-radius:50%;background:var(--line)}
+  .dot.on{background:var(--good)}
+  .gate{max-width:360px;margin:60px auto;padding:0 16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Gym Log</h1>
+    <div class="sub" id="sub">Loading…</div>
+    <div class="week" id="week"></div>
+  </header>
+  <nav id="tabs"></nav>
+  <main id="app"></main>
+</div>
+<div class="savebar" id="savebar" hidden>
+  <div class="inner">
+    <button class="btn primary wide" id="saveBtn">Save workout</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var LS_TOKEN = "gymlog.token", LS_PROG = "gymlog.program", LS_SESS = "gymlog.sessions";
+  var program = null, sessions = [], tab = "d1", editing = false;
+  var draft = {}, dirtyProgram = false, startedAt = null;
+
+  var $app = document.getElementById("app");
+  var $tabs = document.getElementById("tabs");
+  var $sub = document.getElementById("sub");
+  var $week = document.getElementById("week");
+  var $bar = document.getElementById("savebar");
+  var $save = document.getElementById("saveBtn");
+
+  function uid(){ return "x" + Date.now().toString(36) + Math.floor(Math.random()*1e4).toString(36); }
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function today(){ var d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+  function prettyDate(s){
+    if(!s) return "";
+    var p = String(s).slice(0,10).split("-");
+    var d = new Date(Number(p[0]), Number(p[1])-1, Number(p[2]));
+    return d.toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  }
+  function lsGet(k, fb){ try{ var v = localStorage.getItem(k); return v? JSON.parse(v) : fb; }catch(e){ return fb; } }
+  function lsSet(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+  function token(){ try{ return localStorage.getItem(LS_TOKEN) || ""; }catch(e){ return ""; } }
+
+  function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + token()
+    }, opts.headers || {});
+    return fetch("/api/gym" + path, opts).then(function(r){
+      if(r.status === 401){ throw new Error("unauthorized"); }
+      if(!r.ok){ throw new Error("http " + r.status); }
+      return r.json();
+    });
+  }
+
+  // ---------- gate ----------
+  function showGate(msg){
+    document.querySelector(".wrap").innerHTML =
+      '<div class="gate"><h1>Gym Log</h1>'
+      + '<p class="muted">' + esc(msg || "Enter your access token.") + '</p>'
+      + '<input type="password" id="tok" placeholder="token" autocomplete="current-password">'
+      + '<div class="spacer"></div>'
+      + '<button class="btn primary wide" id="go">Unlock</button></div>';
+    $bar.hidden = true;
+    document.getElementById("go").addEventListener("click", function(){
+      var v = document.getElementById("tok").value.trim();
+      if(!v) return;
+      try{ localStorage.setItem(LS_TOKEN, v); }catch(e){}
+      location.reload();
+    });
+  }
+
+  // ---------- helpers ----------
+  function dayById(id){
+    for(var i=0;i<program.days.length;i++){ if(program.days[i].id===id) return program.days[i]; }
+    return program.days[0];
+  }
+  function lastFor(exId){
+    for(var i=0;i<sessions.length;i++){
+      var arr = sessions[i].sets && sessions[i].sets[exId];
+      if(arr && arr.length){
+        var best = null;
+        for(var j=0;j<arr.length;j++){
+          var w = Number(arr[j].w);
+          if(!isNaN(w) && w>0 && (best===null || w>best.w)) best = {w:w, r:arr[j].r};
+        }
+        if(best) return {w:best.w, r:best.r, date:sessions[i].session_date || sessions[i].date};
+      }
+    }
+    return null;
+  }
+  function startOfWeek(){
+    var d = new Date(); var day = (d.getDay()+6)%7; // Monday = 0
+    d.setDate(d.getDate()-day); d.setHours(0,0,0,0); return d;
+  }
+  function renderWeek(){
+    var sow = startOfWeek(), n = 0;
+    sessions.forEach(function(s){
+      var ds = String(s.session_date || s.date || "").slice(0,10);
+      if(!ds) return;
+      var p = ds.split("-");
+      if(new Date(Number(p[0]), Number(p[1])-1, Number(p[2])) >= sow) n++;
+    });
+    var h = "";
+    for(var i=0;i<3;i++) h += '<span class="dot'+(i<n?" on":"")+'"></span>';
+    h += '<span class="muted" style="margin-left:4px">'+n+' of 3 this week</span>';
+    $week.innerHTML = h;
+  }
+
+  // ---------- render ----------
+  function renderTabs(){
+    var html = "";
+    program.days.forEach(function(d,i){
+      html += '<button data-tab="'+d.id+'" aria-pressed="'+(tab===d.id)+'">Day '+(i+1)+'</button>';
+    });
+    html += '<button data-tab="history" aria-pressed="'+(tab==="history")+'">History</button>';
+    $tabs.innerHTML = html;
+  }
+
+  function renderDay(){
+    var day = dayById(tab);
+    var h = '<div class="row" style="justify-content:space-between;margin-bottom:10px">'
+          + '<div><div style="font-weight:700">'+esc(day.name)+'</div>'
+          + '<div class="muted">'+prettyDate(today())+'</div></div>'
+          + '<button class="btn small" id="editToggle">'+(editing?"Done":"Edit")+'</button></div>';
+
+    day.exercises.forEach(function(ex){
+      var last = lastFor(ex.id);
+      h += '<div class="card" data-ex="'+ex.id+'">';
+      if(editing){
+        h += '<div class="editfields">'
+          +  '<input type="text" class="ef-name" value="'+esc(ex.name)+'" placeholder="Exercise">'
+          +  '<input type="number" class="ef-sets" value="'+esc(ex.sets)+'" min="1" max="10" inputmode="numeric" aria-label="sets">'
+          +  '<span class="unit">×</span>'
+          +  '<input type="text" class="ef-reps" value="'+esc(ex.reps)+'" aria-label="reps" style="width:62px;flex:0 0 auto">'
+          +  '<button class="btn small del" data-del="'+ex.id+'">Remove</button></div>';
+      } else {
+        h += '<div class="exhead"><span class="exname">'+esc(ex.name)+'</span>'
+          +  '<span class="target">'+esc(ex.sets)+' × '+esc(ex.reps)+'</span></div>';
+        h += '<div class="last" id="last-'+ex.id+'">'
+          +  (last ? ("Last: " + last.w + " lb × " + (last.r||"?") + " · " + prettyDate(last.date)) : "No history yet")
+          +  '</div><div class="sets">';
+        for(var s=0;s<Number(ex.sets||1);s++){
+          var cur = (draft[ex.id] && draft[ex.id][s]) || {w:"",r:""};
+          h += '<div class="setrow"><span class="setno">'+(s+1)+'</span>'
+            +  '<input type="number" inputmode="decimal" class="in-w" data-ex="'+ex.id+'" data-set="'+s+'" placeholder="lb" value="'+esc(cur.w)+'">'
+            +  '<span class="unit">×</span>'
+            +  '<input type="number" inputmode="numeric" class="in-r" data-ex="'+ex.id+'" data-set="'+s+'" placeholder="reps" value="'+esc(cur.r)+'" style="max-width:88px"></div>';
+        }
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+
+    if(editing){
+      h += '<button class="btn wide" id="addEx">+ Add exercise</button><div class="spacer"></div>';
+      h += '<div class="muted">Renaming or changing sets is saved for next time too.</div>';
+    }
+    h += '<div class="status" id="status"></div>';
+    $app.innerHTML = h;
+    $bar.hidden = editing;
+    wireDay();
+  }
+
+  function renderHistory(){
+    var h = '<div style="font-weight:700;margin-bottom:8px">History</div>';
+    if(!sessions.length) h += '<div class="muted">Nothing logged yet.</div>';
+    sessions.slice(0,25).forEach(function(s){
+      var mins = "";
+      if(s.started_at && s.ended_at){
+        var m = Math.round((new Date(s.ended_at) - new Date(s.started_at))/60000);
+        if(m > 0 && m < 300) mins = " · " + m + " min";
+      }
+      h += '<div class="card hist"><div class="d">'+prettyDate(s.session_date || s.date)+' — '+esc(s.day_name||s.dayName||"")+'<span class="muted">'+esc(mins)+'</span></div><table>';
+      var names = s.names || {};
+      Object.keys(s.sets||{}).forEach(function(k){
+        var txt = (s.sets[k]||[]).map(function(x){ return x.w+"×"+x.r; }).join("  ");
+        if(txt.trim()) h += '<tr><td class="k">'+esc(names[k]||k)+'</td><td>'+esc(txt)+'</td></tr>';
+      });
+      h += '</table></div>';
+    });
+    $app.innerHTML = h;
+    $bar.hidden = true;
+  }
+
+  function render(){
+    renderTabs();
+    renderWeek();
+    if(tab === "history") renderHistory(); else renderDay();
+  }
+
+  // ---------- events ----------
+  $tabs.addEventListener("click", function(e){
+    var b = e.target.closest("button[data-tab]");
+    if(!b) return;
+    tab = b.getAttribute("data-tab"); editing = false; render();
+  });
+
+  function wireDay(){
+    var t = document.getElementById("editToggle");
+    if(t) t.addEventListener("click", function(){
+      if(editing){
+        collectEdits(); editing=false; render();
+        if(dirtyProgram){
+          dirtyProgram=false;
+          api("/program", {method:"PUT", body: JSON.stringify({days: program.days})})
+            .then(function(){ lsSet(LS_PROG, program); setStatus("Program updated"); })
+            .catch(function(){ lsSet(LS_PROG, program); setStatus("Saved on this device only"); });
+        }
+      } else { editing = true; render(); }
+    });
+
+    var add = document.getElementById("addEx");
+    if(add) add.addEventListener("click", function(){
+      collectEdits();
+      dayById(tab).exercises.push({id:uid(), name:"New exercise", sets:3, reps:"10"});
+      dirtyProgram = true; render();
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-del]"), function(b){
+      b.addEventListener("click", function(){
+        collectEdits();
+        var id = b.getAttribute("data-del"), d = dayById(tab);
+        d.exercises = d.exercises.filter(function(x){ return x.id !== id; });
+        dirtyProgram = true; render();
+      });
+    });
+
+    Array.prototype.forEach.call(document.querySelectorAll(".in-w,.in-r"), function(inp){
+      inp.addEventListener("input", function(){
+        // First keystroke of the session is the start time. No button to press.
+        if(!startedAt) startedAt = new Date().toISOString();
+        var ex = inp.getAttribute("data-ex"), i = Number(inp.getAttribute("data-set"));
+        draft[ex] = draft[ex] || [];
+        draft[ex][i] = draft[ex][i] || {w:"",r:""};
+        draft[ex][i][inp.classList.contains("in-w") ? "w" : "r"] = inp.value;
+        if(inp.classList.contains("in-w")) flagUp(ex);
+      });
+    });
+  }
+
+  function flagUp(exId){
+    var last = lastFor(exId), el = document.getElementById("last-"+exId);
+    if(!el || !last) return;
+    var top = 0;
+    (draft[exId]||[]).forEach(function(s){ var w = Number(s && s.w); if(!isNaN(w) && w>top) top = w; });
+    var base = "Last: " + last.w + " lb × " + (last.r||"?") + " · " + prettyDate(last.date);
+    el.innerHTML = top > last.w ? base + ' <span class="up">↑ +' + (Math.round((top-last.w)*10)/10) + ' lb</span>' : base;
+  }
+
+  function collectEdits(){
+    if(!editing) return;
+    var day = dayById(tab);
+    Array.prototype.forEach.call(document.querySelectorAll(".card[data-ex]"), function(card){
+      var id = card.getAttribute("data-ex"), ex = null;
+      day.exercises.forEach(function(x){ if(x.id===id) ex = x; });
+      if(!ex) return;
+      var n = card.querySelector(".ef-name"), s = card.querySelector(".ef-sets"), r = card.querySelector(".ef-reps");
+      if(n && n.value.trim() && n.value !== ex.name){ ex.name = n.value.trim(); dirtyProgram = true; }
+      if(s && Number(s.value) > 0 && Number(s.value) !== Number(ex.sets)){ ex.sets = Math.min(10, Number(s.value)); dirtyProgram = true; }
+      if(r && r.value.trim() && r.value !== ex.reps){ ex.reps = r.value.trim(); dirtyProgram = true; }
+    });
+  }
+
+  function setStatus(msg){
+    var el = document.getElementById("status");
+    if(el) el.textContent = msg;
+  }
+
+  $save.addEventListener("click", function(){
+    var day = dayById(tab), sets = {}, names = {}, any = false;
+    day.exercises.forEach(function(ex){
+      var arr = (draft[ex.id]||[]).filter(function(s){ return s && (String(s.w).trim() || String(s.r).trim()); })
+        .map(function(s){ return {w:String(s.w).trim(), r:String(s.r).trim()}; });
+      if(arr.length){ sets[ex.id] = arr; names[ex.id] = ex.name; any = true; }
+    });
+    if(!any){ setStatus("Nothing entered yet"); return; }
+
+    $save.disabled = true; $save.textContent = "Saving…";
+    var sess = {
+      id: today()+"-"+day.id, date: today(), dayId: day.id, dayName: day.name,
+      sets: sets, names: names, startedAt: startedAt || new Date().toISOString()
+    };
+
+    api("/sessions", {method:"POST", body: JSON.stringify(sess)})
+      .then(function(){ return api("/sessions?limit=120"); })
+      .then(function(data){
+        sessions = data.sessions || [];
+        lsSet(LS_SESS, sessions);
+        draft = {}; startedAt = null;
+        $save.disabled = false; $save.textContent = "Save workout";
+        render(); setStatus("Saved. Next time, beat these numbers.");
+      })
+      .catch(function(err){
+        $save.disabled = false; $save.textContent = "Save workout";
+        if(String(err.message) === "unauthorized") return showGate("Token rejected. Try again.");
+        setStatus("Couldn't reach the server — nothing saved. Try again.");
+      });
+  });
+
+  // ---------- boot ----------
+  if(!token()) return showGate();
+
+  program = lsGet(LS_PROG, null) || {days:[]};
+  sessions = lsGet(LS_SESS, []);
+  $sub.textContent = "3 days a week · log it, beat it";
+
+  Promise.all([api("/program"), api("/sessions?limit=120")])
+    .then(function(r){
+      program = {days: r[0].days};
+      sessions = r[1].sessions || [];
+      lsSet(LS_PROG, program); lsSet(LS_SESS, sessions);
+      render();
+    })
+    .catch(function(err){
+      if(String(err.message) === "unauthorized") return showGate("Token rejected. Try again.");
+      if(program.days.length){ render(); setStatus("Offline — showing last known data."); }
+      else { $app.innerHTML = '<div class="muted">Can’t reach the server.</div>'; }
+    });
+})();
+</script>
+</body>
+</html>

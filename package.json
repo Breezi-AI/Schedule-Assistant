@@ -1,0 +1,18 @@
+{
+  "name": "personal-ops",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Time-blocking and accountability service. Milestone 0: hook collector + gym log.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "migrate": "node src/db/migrate.js"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}
