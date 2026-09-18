@@ -85,5 +85,87 @@ check('tool_calls parsing survives junk entries if ever sent',
   withTools.tool_names[0] === 'Bash' && withTools.tool_names[1] === 'Read',
   JSON.stringify(withTools));
 
+// ---------------------------------------------------------------------
+// Local time. Every case below is one where offset arithmetic gets it wrong.
+// ---------------------------------------------------------------------
+const { weekStartDate, comingWeekStart, slotFor } = await import('../src/time.js');
+const NY = 'America/New_York';
+
+console.log('\nweekStartDate');
+
+// The bug, stated as a test. 9pm Sunday in New York is already Monday in UTC,
+// so date_trunc('week', now()) in a UTC database returned the NEXT Monday and
+// the workout being logged at that moment fell outside "this week".
+const sundayNight = new Date('2026-09-21T01:00:00Z'); // Sun 20 Sep, 21:00 New York
+check('9pm Sunday in New York belongs to the week that started Mon 14 Sep',
+  weekStartDate(sundayNight, NY) === '2026-09-14',
+  `got ${weekStartDate(sundayNight, NY)} (UTC would say 2026-09-21, which was the bug)`);
+
+check('the same instant read as UTC really does fall on the Monday',
+  new Date(sundayNight).toISOString().slice(0, 10) === '2026-09-21',
+  'if this fails the fixture is wrong, not the code');
+
+const mondayJustAfter = new Date('2026-09-21T04:01:00Z'); // Mon 21 Sep, 00:01 New York
+check('one minute past midnight Monday starts the new week',
+  weekStartDate(mondayJustAfter, NY) === '2026-09-21',
+  `got ${weekStartDate(mondayJustAfter, NY)}`);
+
+const sundayJustBefore = new Date('2026-09-21T03:59:00Z'); // Sun 20 Sep, 23:59 New York
+check('one minute before midnight Sunday is still the old week',
+  weekStartDate(sundayJustBefore, NY) === '2026-09-14',
+  `got ${weekStartDate(sundayJustBefore, NY)}`);
+
+// 1 Nov 2026 is the Sunday the clocks go back, and it is also a Sunday night.
+const dstSundayNight = new Date('2026-11-02T02:00:00Z'); // Sun 1 Nov, 21:00 New York (EST)
+check('Sunday night of the DST changeover lands in the week from Mon 26 Oct',
+  weekStartDate(dstSundayNight, NY) === '2026-10-26',
+  `got ${weekStartDate(dstSundayNight, NY)}`);
+
+console.log('\ncomingWeekStart');
+check('run on Sunday evening, the coming week starts tomorrow',
+  comingWeekStart(sundayNight, NY).toISODate() === '2026-09-21',
+  `got ${comingWeekStart(sundayNight, NY).toISODate()}`);
+
+const wednesday = new Date('2026-09-23T16:00:00Z');
+check('run manually midweek, it still means the next calendar week',
+  comingWeekStart(wednesday, NY).toISODate() === '2026-09-28',
+  `got ${comingWeekStart(wednesday, NY).toISODate()}`);
+
+console.log('\nslotFor (DST correctness)');
+
+// Same wall-clock time either side of the November changeover must produce
+// instants an hour apart. This is the check that offset arithmetic fails.
+const edtWeek = comingWeekStart(new Date('2026-10-20T16:00:00Z'), NY); // -> Mon 26 Oct, EDT
+const estWeek = comingWeekStart(new Date('2026-10-27T16:00:00Z'), NY); // -> Mon  2 Nov, EST
+
+const edtMon = slotFor(edtWeek, 0, 17, 45, 60);
+const estMon = slotFor(estWeek, 0, 17, 45, 60);
+
+check('the week before the change starts Mon 26 Oct at UTC-04:00',
+  edtMon.date === '2026-10-26' && edtMon.offset === '-04:00',
+  `date=${edtMon.date} offset=${edtMon.offset}`);
+check('the week after the change starts Mon 2 Nov at UTC-05:00',
+  estMon.date === '2026-11-02' && estMon.offset === '-05:00',
+  `date=${estMon.date} offset=${estMon.offset}`);
+check('17:45 local is 21:45Z before the change',
+  edtMon.startUtc.startsWith('2026-10-26T21:45'),
+  `got ${edtMon.startUtc}`);
+check('17:45 local is 22:45Z after it -- a naive fixed offset would say 21:45Z',
+  estMon.startUtc.startsWith('2026-11-02T22:45'),
+  `got ${estMon.startUtc}`);
+check('the local wall clock is identical on both sides of the change',
+  edtMon.startLocal.slice(11) === '17:45:00' && estMon.startLocal.slice(11) === '17:45:00',
+  `${edtMon.startLocal} vs ${estMon.startLocal}`);
+
+const friday = slotFor(estWeek, 4, 16, 5, 60);
+check('Friday resolves to day 5 of the week at 16:05-17:05 local',
+  friday.date === '2026-11-06' && friday.startLocal.endsWith('16:05:00') &&
+  friday.endLocal.endsWith('17:05:00'),
+  `${friday.date} ${friday.startLocal} -> ${friday.endLocal}`);
+
+const wed = slotFor(estWeek, 2, 17, 45, 60);
+check('Wednesday resolves to day 3 of the week',
+  wed.date === '2026-11-04', `got ${wed.date}`);
+
 console.log(`\n${pass} passed, ${fail} failed\n`);
 process.exit(fail ? 1 : 0);

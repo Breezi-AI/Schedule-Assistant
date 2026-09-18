@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { q, ccSessions } from '../db/index.js';
+import { q, ccSessions, gymWeekSummary } from '../db/index.js';
 
 export const gym = Router();
 
@@ -129,14 +129,7 @@ gym.post('/sessions', wrap(async (req, res) => {
 // --- this week, the only number that matters right now -----------
 
 gym.get('/week', wrap(async (_req, res) => {
-  const { rows } = await q(
-    `SELECT COUNT(*)::int AS sessions,
-            COALESCE(ROUND(AVG(
-              EXTRACT(EPOCH FROM (ended_at - started_at)) / 60.0
-            ))::int, 0) AS avg_minutes
-     FROM gym_sessions
-     WHERE session_date >= date_trunc('week', now())::date`
-  );
+  const summary = await gymWeekSummary();
   const cc = await ccSessions({ since: '7 days' });
   const byProject = {};
   for (const s of cc) {
@@ -144,7 +137,7 @@ gym.get('/week', wrap(async (_req, res) => {
       (byProject[s.project ?? 'unknown'] ?? 0) + (s.active_minutes || 0);
   }
   res.json({
-    gym: { ...rows[0], target: 3 },
+    gym: { ...summary, target: 3 },
     claude_code_minutes_by_project: byProject,
   });
 }));

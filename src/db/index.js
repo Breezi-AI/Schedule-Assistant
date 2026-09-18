@@ -2,6 +2,7 @@ import pg from 'pg';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { weekStartDate } from '../time.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -82,6 +83,35 @@ export async function ccSessions({ since = '30 days', project = null } = {}) {
     [since, project, gap, cap, floor]
   );
   return rows;
+}
+
+/**
+ * Sessions and average duration for the week containing `asOf`.
+ *
+ * The week boundary is computed in the local zone by `weekStartDate` and
+ * passed in as a parameter, rather than by `date_trunc('week', now())` which
+ * Postgres evaluates in the database session's timezone (UTC on Railway).
+ * That is the whole bug: at 9pm Sunday in New York it is already Monday in
+ * UTC, so the database reported the week as starting the next Monday and a
+ * Sunday-evening workout fell outside "this week" the instant it was logged.
+ *
+ * `asOf` exists so that boundary can be tested at a fixed instant instead of
+ * only on whatever day the suite happens to run. Nothing in production passes
+ * it.
+ */
+export async function gymWeekSummary({ asOf = new Date() } = {}) {
+  const weekStart = weekStartDate(asOf);
+  const { rows } = await q(
+    `SELECT COUNT(*)::int AS sessions,
+            COALESCE(ROUND(AVG(
+              EXTRACT(EPOCH FROM (ended_at - started_at)) / 60.0
+            ))::int, 0) AS avg_minutes
+     FROM gym_sessions
+     WHERE session_date >= $1::date
+       AND session_date <  ($1::date + 7)`,
+    [weekStart]
+  );
+  return { ...rows[0], week_start: weekStart };
 }
 
 /** Active minutes per project per day. What the weekly summary reads. */

@@ -10,13 +10,17 @@
     "dev": "node --watch src/index.js",
     "migrate": "node src/db/migrate.js",
     "smoke": "node scripts/smoke.js",
-    "test:unit": "node scripts/unit.js"
+    "test:unit": "node scripts/unit.js",
+    "test:week": "node scripts/test-week.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "express": "^4.21.2",
+    "google-auth-library": "^11.1.0",
+    "luxon": "^3.7.2",
+    "node-cron": "^4.6.0",
     "pg": "^8.13.1"
   }
 }
